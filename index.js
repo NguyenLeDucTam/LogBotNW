@@ -2,10 +2,39 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Client, Collection, Events, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const { token,bankchannel,banklogchannel,blacklistlogchannel,blacklistchannel } = require('./config.json');
+const {blackListSaved, bankLogSaved, currentBankSaved} = require('./data.json');
 const { channel } = require('node:diagnostics_channel');
-var blackList = ['Prom - Prom - Prom'];
-var bankLog = ["-   -   -"]
-var currentBank = 0;
+var blackList = blackListSaved
+var bankLog = bankLogSaved
+var currentBank = currentBankSaved
+function saveDataToFile() {
+	const data={
+		bankLogSaved:bankLog,
+		blackListSaved:blackList,
+		currentBankSaved:currentBank
+	};
+    fs.writeFile('data.json', JSON.stringify(data, null, 2), (err) => {
+        if (err) {
+            console.error('/////////////////////////////////////////////////Error saving data:', err);
+            return;
+        }
+        console.log('Data saved to file at', new Date().toLocaleString());
+    });
+}
+const fiveHours = 5 * 60 * 60 * 1000;
+
+setInterval(saveDataToFile, fiveHours);
+function convertToEST() {
+    const localTime = new Date();
+    const localTimeOffset = localTime.getTimezoneOffset() * 60000;
+    const utcTime = localTime.getTime() + localTimeOffset;
+    const estOffset = -5 * 60 * 60000;
+    const estTime = new Date(utcTime + estOffset);
+
+    return estTime;
+}
+
+
 var dBankLog =bankLog.map(n=>n.split('-')[0].trimEnd());
 var dBankLogTime = bankLog.map(n=>n.split("-")[1].trimStart().trimEnd())
 var dBankLogAuthor = bankLog.map(n=>n.split("-")[2].trimStart().trimEnd())
@@ -66,9 +95,9 @@ const bankEmbed = new EmbedBuilder()
     .setTitle("Guild's bank log")
     .setDescription(`Current bank gold is: ${currentBank}`);
 	bankEmbed.addFields(
-		{ name: 'Amount', value: nameList, inline: true },
-		{ name: 'Time', value: reasonList, inline: true },
-		{ name: 'Author', value: authorList, inline: true }
+		{ name: 'Amount', value: amountList, inline: true },
+		{ name: 'Time', value: timeList, inline: true },
+		{ name: 'Author', value: bankAuthorList, inline: true }
 	);
 var embedId;
 client.commands = new Collection();
@@ -90,6 +119,7 @@ for (const folder of commandFolders) {
 }
 
 client.once(Events.ClientReady, readyClient => {
+	saveDataToFile()
 	console.log(`Ready! Logged in as ${readyClient.user.tag}`);
 	try {
 		channelLog =client.channels.fetch(blacklistchannel)
@@ -159,7 +189,7 @@ client.on(Events.InteractionCreate, async interaction => {
 						await embedId.edit({embeds: [newEmbed]})
 						try{
 							channelLog =client.channels.fetch(blacklistlogchannel).then(channel => 
-								channel.send(`**${userInput}** was deleted off the blacklist by **${interaction.user.username}** on **${new Date()}**`))
+								channel.send(`**${userInput}** was deleted off the blacklist by **${interaction.member.displayName}** on **${convertToEST()}**`))
 							await interaction.reply({content:`Deleted: ${userInput}`,ephemeral: true}); 
 						}
 						catch(err){
@@ -184,7 +214,7 @@ client.on(Events.InteractionCreate, async interaction => {
 					await interaction.reply({content:`already in the blacklist`,ephemeral: true}); 
 				}
 				else {
-						blackList.push(userInput+" - "+userReason+" - "+interaction.user.username)
+						blackList.push(userInput+" - "+userReason+" - "+interaction.member.displayName)
 						console.log(blackList)
 						eBlackList.push(userInput.toLocaleLowerCase())
 						var dBlackList =blackList.map(n=>n.split('-')[0].trimEnd());
@@ -213,7 +243,7 @@ client.on(Events.InteractionCreate, async interaction => {
 						try {
 							await embedId.edit({embeds: [newEmbed]})
 							channelLog =client.channels.fetch(blacklistlogchannel).then(channel => 
-								{channel.send(`**${userInput}** was added to the blacklist by **${interaction.user.username}** on **${new Date()}**`)
+								{channel.send(`**${userInput}** was added to the blacklist by **${interaction.member.displayName}** on **${convertToEST()}**`)
 								})
 								
 							await interaction.reply({content:`Added: ${userInput}`,ephemeral: true}); 
@@ -228,7 +258,7 @@ client.on(Events.InteractionCreate, async interaction => {
 				const userReason = interaction.options.getString('updatereason')
 				const qNames = eBlackList.indexOf(userInput.toLocaleLowerCase());
 				if (qNames != -1){
-					blackList[qNames] = blackList[qNames].split('-')[0].trimEnd() + " - "+userReason+" - "+interaction.user.username
+					blackList[qNames] = blackList[qNames].split('-')[0].trimEnd() + " - "+userReason+" - "+interaction.member.displayName
 					var dBlackList =blackList.map(n=>n.split('-')[0].trimEnd());
 						var dBlackListReason = blackList.map(n=>n.split("-")[1].trimStart().trimEnd())
 						var dBlackListAuthor = blackList.map(n=>n.split("-")[2].trimStart().trimEnd())
@@ -282,7 +312,14 @@ client.on(Events.InteractionCreate, async interaction => {
 					await interaction.reply({content:`can't add that shit to the bank`,ephemeral: true}); 
 				}
 				else {
-						bankLog.push(userInput+" - "+formatDateTime(new Date())+" - "+interaction.user.username)
+						const author = interaction.options.getString('author')
+						if (author != null){
+							bankLog.push(userInput.toLocaleString('de-DE')+" - "+formatDateTime(convertToEST())+" - "+author)
+						}
+						else{
+							bankLog.push(userInput.toLocaleString('de-DE')+" - "+formatDateTime(convertToEST())+" - "+interaction.member.displayName)
+						}
+						
 						var dBankLog =bankLog.map(n=>n.split('-')[0].trimEnd());
 						var dBankLogTime = bankLog.map(n=>n.split("-")[1].trimStart().trimEnd())
 						var dBankLogAuthor = bankLog.map(n=>n.split("-")[2].trimStart().trimEnd())
@@ -302,17 +339,26 @@ client.on(Events.InteractionCreate, async interaction => {
 						const oldEmbed = bankMessage.embeds[0];
 						const newEmbed = EmbedBuilder.from(oldEmbed)
 						.setFields(
-							{ name: 'Name', value: amountList, inline: true },
-							{ name: 'Reason', value: timeList, inline: true },
+							{ name: 'Amount', value: amountList, inline: true },
+							{ name: 'Date', value: timeList, inline: true },
 							{ name: 'Author', value: bankAuthorList, inline: true }
 						).setDescription(`Current bank gold is: ${currentBank}`);
 						try {
 							await bankMessage.edit({embeds: [newEmbed]})
-							channelLog =client.channels.fetch(bankchannel).then(channel => 
-								{channel.send(`**${userInput}g** was added to the guild by **${interaction.user.username}** on **${new Date()}**`)
-								})
-								
-							await interaction.reply({content:`Deposited to the bank: ${userInput}`,ephemeral: true}); 
+							if (author!=null){
+								channelLog =client.channels.fetch(bankchannel).then(channel => 
+									{channel.send(`**${userInput.toLocaleString('de-DE')}g** was added to the guild by **${interaction.member.displayName}** on behalf of **${author}** on **${convertToEST()}**`)
+									})
+							}
+							else{
+								channelLog =client.channels.fetch(bankchannel).then(channel => 
+									{channel.send(`**${userInput.toLocaleString('de-DE')}g** was added to the guild by **${interaction.member.displayName}** on **${convertToEST()}**`)
+									})
+									
+							}
+							
+							await interaction.reply({content:`Deposited to the bank: ${userInput.toLocaleString('de-DE')}g`,ephemeral: true}); 
+							
 						}catch(err){
 							console.error("Error while trying to sending message: ",err)
 						}
@@ -321,12 +367,19 @@ client.on(Events.InteractionCreate, async interaction => {
 			}
 			if (action ==='withdrawal'){
 				const userInput = interaction.options.getInteger('goldamount')
-				
+				const author = interaction.options.getString('author')
+				const withdrawReason = interaction.options.getString('reason')
 				if (userInput <=0){
 					await interaction.reply({content:`can't add that shit to the bank`,ephemeral: true}); 
 				}
 				else {
-						bankLog.push(userInput+" - "+formatDateTime(new Date())+" - "+interaction.user.username)
+						if (author !=null){
+							bankLog.push("~"+userInput.toLocaleString('de-DE')+" - "+formatDateTime(convertToEST())+" - "+author+`: ${withdrawReason}`)
+						}
+						else{
+							bankLog.push("~"+userInput.toLocaleString('de-DE')+" - "+formatDateTime(convertToEST())+" - "+interaction.member.displayName+`: ${withdrawReason}`)
+						}
+						
 						var dBankLog =bankLog.map(n=>n.split('-')[0].trimEnd());
 						var dBankLogTime = bankLog.map(n=>n.split("-")[1].trimStart().trimEnd())
 						var dBankLogAuthor = bankLog.map(n=>n.split("-")[2].trimStart().trimEnd())
@@ -346,17 +399,25 @@ client.on(Events.InteractionCreate, async interaction => {
 						const oldEmbed = bankMessage.embeds[0];
 						const newEmbed = EmbedBuilder.from(oldEmbed)
 						.setFields(
-							{ name: 'Name', value: amountList, inline: true },
-							{ name: 'Reason', value: timeList, inline: true },
+							{ name: 'Amount', value: amountList, inline: true },
+							{ name: 'Date', value: timeList, inline: true },
 							{ name: 'Author', value: bankAuthorList, inline: true }
 						).setDescription(`Current bank gold is: ${currentBank}`);
 						try {
 							await bankMessage.edit({embeds: [newEmbed]})
-							client.channels.fetch(bankchannel).then(channel => 
-								{channel.send(`**${userInput}g** was withdrawn from the guild by **${interaction.user.username}** on **${new Date()}**`)
-								})
+							if (author != null){
+								client.channels.fetch(bankchannel).then(channel => 
+									{channel.send(`**${userInput.toLocaleString('de-DE')}g** was withdrawn from the guild by **${interaction.member.displayName}** on behalf of **${author}** on **${convertToEST()}** \n **Reason:** ${withdrawReason}`)
+									})
+							}
+							else{
+								client.channels.fetch(bankchannel).then(channel => 
+									{channel.send(`**${userInput.toLocaleString('de-DE')}g** was withdrawn from the guild by **${interaction.member.displayName}** on **${convertToEST()}** \n **Reason:** ${withdrawReason}`)
+									})
+							}
+							
 								
-							await interaction.reply({content:`Withdrawn from the bank: ${userInput}`,ephemeral: true}); 
+							await interaction.reply({content:`Withdrawn from the bank: ${userInput.toLocaleString('de-DE')}g`,ephemeral: true}); 
 						}catch(err){
 							console.error("Error while trying to sending message: ",err)
 						}
